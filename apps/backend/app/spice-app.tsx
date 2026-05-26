@@ -385,6 +385,18 @@ export default function SpiceApp() {
     }
     return false;
   });
+  const [playerPlacement, setPlayerPlacement] = useState<'bottom' | 'top'>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('spice_player_placement') as 'bottom' | 'top') || 'bottom';
+    }
+    return 'bottom';
+  });
+  const [playerViewMode, setPlayerViewMode] = useState<'bar' | 'expanded' | 'mini'>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('spice_player_view_mode') as 'bar' | 'expanded' | 'mini') || 'bar';
+    }
+    return 'bar';
+  });
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
@@ -1251,42 +1263,104 @@ export default function SpiceApp() {
   };
 
   const getAccentStyles = () => {
+    let base = '';
     switch (accentTheme) {
       case 'blue':
-        return `
+        base = `
           :root {
             --accent-pink: #3b82f6 !important;
             --accent-pink-rgb: 59, 130, 246 !important;
             --accent-purple: #06b6d4 !important;
           }
         `;
+        break;
       case 'orange':
-        return `
+        base = `
           :root {
             --accent-pink: #f97316 !important;
             --accent-pink-rgb: 249, 115, 22 !important;
             --accent-purple: #ef4444 !important;
           }
         `;
+        break;
       case 'green':
-        return `
+        base = `
           :root {
             --accent-pink: #10b981 !important;
             --accent-pink-rgb: 16, 185, 129 !important;
             --accent-purple: #059669 !important;
           }
         `;
+        break;
       case 'gold':
-        return `
+        base = `
           :root {
             --accent-pink: #f59e0b !important;
             --accent-pink-rgb: 245, 158, 11 !important;
             --accent-purple: #d97706 !important;
           }
         `;
+        break;
       default: // pink
-        return ``;
+        base = `
+          :root {
+            --accent-pink: #ec4899 !important;
+            --accent-pink-rgb: 236, 72, 153 !important;
+            --accent-purple: #a855f7 !important;
+          }
+        `;
+        break;
     }
+
+    if (playerPlacement === 'top') {
+      base += `
+        .app {
+          grid-template-rows: var(--now-playing-height) 1fr !important;
+        }
+        .now-playing {
+          grid-row: 1 / 2 !important;
+          border-top: none !important;
+          border-bottom: 1px solid var(--border-glass) !important;
+        }
+        .sidebar {
+          grid-row: 2 / 3 !important;
+        }
+        .main {
+          grid-row: 2 / 3 !important;
+        }
+      `;
+    }
+
+    if (playerViewMode === 'mini') {
+      base += `
+        .app {
+          grid-template-rows: 1fr !important;
+        }
+        .now-playing {
+          display: none !important;
+        }
+      `;
+    }
+
+    base += `
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+      .vinyl-spin {
+        animation: spin 20s linear infinite;
+      }
+      .expanded-player__btn:hover {
+        transform: scale(1.15);
+        color: var(--accent-pink) !important;
+      }
+      .expanded-player__btn-play:hover {
+        transform: scale(1.08);
+        box-shadow: 0 12px 32px rgba(var(--accent-pink-rgb), 0.6) !important;
+      }
+    `;
+
+    return base;
   };
 
   return (
@@ -2432,6 +2506,47 @@ export default function SpiceApp() {
                     </div>
                   </div>
 
+                  {/* Player View & Position Settings */}
+                  <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
+                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif' }}>🖥️ Player Layout & Viewing Options</h3>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
+                      Customize the now-playing bar placement, open the immersive full-screen player, or collapse it into a floating picture-in-picture widget.
+                    </p>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>Player Placement</label>
+                        <select 
+                          value={playerPlacement} 
+                          onChange={(e) => {
+                            setPlayerPlacement(e.target.value as any);
+                            localStorage.setItem('spice_player_placement', e.target.value);
+                          }}
+                          style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none', cursor: 'pointer' }}
+                        >
+                          <option value="bottom">Bottom Docked (Default)</option>
+                          <option value="top">Top Header Docked</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>Player View Mode</label>
+                        <select 
+                          value={playerViewMode} 
+                          onChange={(e) => {
+                            setPlayerViewMode(e.target.value as any);
+                            localStorage.setItem('spice_player_view_mode', e.target.value);
+                          }}
+                          style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none', cursor: 'pointer' }}
+                        >
+                          <option value="bar">Classic Now-Playing Bar</option>
+                          <option value="expanded">Immersive Full-Screen Player</option>
+                          <option value="mini">Floating Mini Player Widget</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Cache & Safety Controls */}
                   <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
                     <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif' }}>🧹 Caches & System Integrity</h3>
@@ -2657,7 +2772,7 @@ export default function SpiceApp() {
 
         {/* Center: song info & seek slider */}
         <div style={{ display: 'flex', alignItems: 'center', minWidth: 0, width: '100%' }}>
-          <div className="now-playing__song">
+          <div className="now-playing__song" onClick={() => { setPlayerViewMode('expanded'); localStorage.setItem('spice_player_view_mode', 'expanded'); }} style={{ cursor: 'pointer' }} title="Expand Player View">
             <img className="now-playing__art" src={currentTrack.artworkUrl || '/icon.svg'} alt={currentTrack.title} />
             <div className="now-playing__info">
               <span className="now-playing__title truncate">{currentTrack.title}</span>
@@ -2713,6 +2828,329 @@ export default function SpiceApp() {
           </div>
         </div>
       </footer>
+
+      {/* ═══ Expanded Player Immersive Full-Screen Overlay ═══ */}
+      {playerViewMode === 'expanded' && (
+        <div className="expanded-player animate-in" style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(6, 6, 6, 0.9)',
+          backgroundImage: `radial-gradient(circle at 50% 30%, rgba(var(--accent-pink-rgb, 236, 72, 153), 0.18), transparent 60%)`,
+          backdropFilter: 'blur(50px)',
+          WebkitBackdropFilter: 'blur(50px)',
+          zIndex: 9999,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '40px 24px',
+          color: '#fff',
+          fontFamily: 'Outfit, sans-serif'
+        }}>
+          {/* Header */}
+          <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', maxWidth: '1000px' }}>
+            <button 
+              onClick={() => {
+                setPlayerViewMode('mini');
+                localStorage.setItem('spice_player_view_mode', 'mini');
+              }}
+              style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', padding: '8px 16px', borderRadius: '20px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}
+              title="Mini Player"
+            >
+              🗗 Floating Mini Player
+            </button>
+            <div style={{ fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.2em', opacity: 0.5, fontWeight: 700 }}>Now Playing</div>
+            <button 
+              onClick={() => {
+                setPlayerViewMode('bar');
+                localStorage.setItem('spice_player_view_mode', 'bar');
+              }}
+              style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', cursor: 'pointer', fontSize: '1.75rem', padding: '4px 10px', outline: 'none' }}
+              title="Close"
+            >
+              ✕
+            </button>
+          </div>
+
+          {/* Central content layout: Grid with artwork + controls, and Optional Playlist Queue/Lyrics */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 450px) 1fr', gap: '64px', width: '100%', maxWidth: '1000px', flex: 1, alignItems: 'center', margin: '40px 0' }}>
+            
+            {/* Column 1: Massive Spinning Artwork & Titles */}
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
+              <div 
+                style={{ 
+                  width: '360px', 
+                  height: '360px', 
+                  borderRadius: '24px', 
+                  overflow: 'hidden', 
+                  position: 'relative', 
+                  boxShadow: `0 24px 64px rgba(0,0,0,0.8), 0 0 40px rgba(var(--accent-pink-rgb, 236, 72, 153), 0.25)`, 
+                  marginBottom: '32px',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  transition: 'transform 0.5s ease'
+                }}
+                className={isPlaying ? 'vinyl-spin' : ''}
+              >
+                <img 
+                  src={currentTrack.artworkUrl || '/icon.svg'} 
+                  alt="" 
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                />
+              </div>
+
+              <h2 style={{ fontSize: '2rem', fontWeight: 800, margin: '0 0 8px 0', width: '100%', fontFamily: 'Outfit, sans-serif' }} className="truncate">
+                {currentTrack.title}
+              </h2>
+              <p style={{ fontSize: '1.1rem', color: 'var(--text-secondary)', margin: 0, width: '100%' }} className="truncate">
+                {currentTrack.artists.map(a => a.name).join(', ')}
+              </p>
+            </div>
+
+            {/* Column 2: Stream details, Waveform, Slider & Big transport controls */}
+            <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '32px' }}>
+              
+              {/* Audio visualization mock */}
+              <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', height: '60px', width: '100%', padding: '12px 24px', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.04)' }}>
+                {[...Array(24)].map((_, i) => {
+                  // Generate stable dummy visualization waves
+                  const baseVal = 20 + Math.abs(Math.sin((i + progress) * 0.5)) * 60;
+                  const randHeight = isPlaying ? baseVal + Math.random() * 20 : 15;
+                  return (
+                    <div 
+                      key={i} 
+                      style={{ 
+                        width: '3%', 
+                        height: `${Math.min(100, Math.max(5, randHeight))}%`, 
+                        background: 'var(--accent-pink)', 
+                        borderRadius: '4px',
+                        transition: 'height 0.1s ease',
+                        boxShadow: '0 0 8px var(--accent-pink)'
+                      }} 
+                    />
+                  );
+                })}
+              </div>
+
+              {/* Progress seeker */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ position: 'relative', height: '8px', width: '100%', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', cursor: 'pointer' }} onClick={handleSeek}>
+                  <div 
+                    style={{ 
+                      position: 'absolute', 
+                      left: 0, 
+                      top: 0, 
+                      bottom: 0, 
+                      width: `${duration > 0 ? (progress / duration) * 100 : 0}%`, 
+                      background: 'var(--accent-pink)', 
+                      borderRadius: '4px',
+                      boxShadow: '0 0 10px var(--accent-pink)'
+                    }} 
+                  />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                  <span>{formatTime(progress)}</span>
+                  <span>{formatTime(duration)}</span>
+                </div>
+              </div>
+
+              {/* Huge transport buttons */}
+              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '32px' }}>
+                <button 
+                  onClick={handlePrev} 
+                  style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', outline: 'none', transition: 'all 0.15s ease' }} 
+                  className="expanded-player__btn"
+                >
+                  <span style={{ transform: 'scale(1.5)', display: 'inline-block' }}>{Icons.prev}</span>
+                </button>
+
+                <button 
+                  onClick={togglePlayPause} 
+                  style={{ 
+                    width: '80px', 
+                    height: '80px', 
+                    borderRadius: '50%', 
+                    background: 'var(--accent-pink)', 
+                    border: 'none', 
+                    color: '#fff', 
+                    cursor: 'pointer', 
+                    outline: 'none', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center',
+                    boxShadow: '0 8px 24px rgba(var(--accent-pink-rgb, 236, 72, 153), 0.4)',
+                    transition: 'all 0.15s ease'
+                  }}
+                  className="expanded-player__btn-play"
+                >
+                  <span style={{ transform: 'scale(2.0)', display: 'inline-block' }}>
+                    {isPlaying ? Icons.pause : Icons.play}
+                  </span>
+                </button>
+
+                <button 
+                  onClick={handleNext} 
+                  style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', outline: 'none', transition: 'all 0.15s ease' }} 
+                  className="expanded-player__btn"
+                >
+                  <span style={{ transform: 'scale(1.5)', display: 'inline-block' }}>{Icons.next}</span>
+                </button>
+              </div>
+
+              {/* Volume and info footer in Column 2 */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' }}>
+                <button
+                  className={`now-playing__like ${likedTracks.has(currentTrack.id) ? 'liked' : ''}`}
+                  onClick={() => toggleLike(currentTrack)}
+                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', padding: '10px', borderRadius: '50%', cursor: 'pointer' }}
+                >
+                  <span style={{ display: 'inline-flex', transform: 'scale(1.2)' }}>
+                    {likedTracks.has(currentTrack.id) ? Icons.heartFilled : Icons.heart}
+                  </span>
+                </button>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', width: '180px' }}>
+                  <span style={{ opacity: 0.6 }}>{Icons.volume}</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={volume}
+                    onChange={(e) => setVolume(Number(e.target.value))}
+                    style={{ width: '100%', cursor: 'pointer', accentColor: 'var(--accent-pink)' }}
+                  />
+                </div>
+              </div>
+
+            </div>
+
+          </div>
+
+          {/* Footer branding */}
+          <div style={{ opacity: 0.3, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span>Spice Premium Audio Resolution Engine</span>
+            <span>•</span>
+            <span>PWA v1.0.4</span>
+          </div>
+
+        </div>
+      )}
+
+      {/* ═══ Floating Mini Player Widget ═══ */}
+      {playerViewMode === 'mini' && (
+        <div 
+          className="mini-player animate-in" 
+          style={{
+            position: 'fixed',
+            right: '24px',
+            bottom: '24px',
+            width: '320px',
+            height: '96px',
+            background: 'rgba(10, 10, 10, 0.9)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '20px',
+            backdropFilter: 'blur(30px)',
+            WebkitBackdropFilter: 'blur(30px)',
+            boxShadow: '0 12px 40px rgba(0, 0, 0, 0.6), 0 0 20px rgba(var(--accent-pink-rgb, 236, 72, 153), 0.1)',
+            zIndex: 99999,
+            display: 'flex',
+            alignItems: 'center',
+            padding: '12px',
+            gap: '12px',
+            fontFamily: 'Outfit, sans-serif',
+            color: '#fff',
+          }}
+        >
+          {/* Artwork */}
+          <img 
+            src={currentTrack.artworkUrl || '/icon.svg'} 
+            alt="" 
+            style={{ width: '60px', height: '60px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0, border: '1px solid rgba(255,255,255,0.06)' }} 
+          />
+
+          {/* Details */}
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '2px' }}>
+            <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#fff' }} className="truncate">
+              {currentTrack.title}
+            </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }} className="truncate">
+              {currentTrack.artists.map(a => a.name).join(', ')}
+            </div>
+          </div>
+
+          {/* Controls */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+            <button 
+              onClick={togglePlayPause} 
+              style={{ 
+                width: '36px', 
+                height: '36px', 
+                borderRadius: '50%', 
+                background: 'var(--accent-pink)', 
+                border: 'none', 
+                color: '#fff', 
+                cursor: 'pointer', 
+                outline: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 4px 12px rgba(var(--accent-pink-rgb, 236, 72, 153), 0.3)'
+              }}
+            >
+              <span style={{ transform: 'scale(1.1)', display: 'inline-flex' }}>
+                {isPlaying ? Icons.pause : Icons.play}
+              </span>
+            </button>
+            
+            <button 
+              onClick={() => {
+                setPlayerViewMode('expanded');
+                localStorage.setItem('spice_player_view_mode', 'expanded');
+              }}
+              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', padding: '6px', borderRadius: '50%', cursor: 'pointer', outline: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              title="Expand Player"
+            >
+              ⤢
+            </button>
+
+            <button 
+              onClick={() => {
+                setPlayerViewMode('bar');
+                localStorage.setItem('spice_player_view_mode', 'bar');
+              }}
+              style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', padding: '4px', cursor: 'pointer', fontSize: '1rem' }}
+              title="Back to bar"
+            >
+              ✕
+            </button>
+          </div>
+
+          {/* Minimal Seek Progress strip at the very bottom */}
+          <div 
+            style={{ 
+              position: 'absolute', 
+              bottom: 0, 
+              left: '12px', 
+              right: '12px', 
+              height: '3px', 
+              background: 'rgba(255,255,255,0.1)', 
+              borderRadius: '2px', 
+              overflow: 'hidden' 
+            }}
+          >
+            <div 
+              style={{ 
+                height: '100%', 
+                width: `${duration > 0 ? (progress / duration) * 100 : 0}%`, 
+                background: 'var(--accent-pink)' 
+              }} 
+            />
+          </div>
+
+        </div>
+      )}
     </div>
   );
 }
