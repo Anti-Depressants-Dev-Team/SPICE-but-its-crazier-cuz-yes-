@@ -13,8 +13,14 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Spice music test",
-  description: "Minimal YouTube Music search and embedded playback test.",
+  title: "Flowbeat — Premium Music Streaming",
+  description: "A premium music streaming experience. Discover, stream, and enjoy millions of songs.",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Flowbeat",
+  },
 };
 
 export default function RootLayout({
