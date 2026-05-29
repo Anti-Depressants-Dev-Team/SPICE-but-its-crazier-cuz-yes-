@@ -251,6 +251,88 @@ const sanitizePfpUrl = (url: string): string => {
   return cleaned;
 };
 
+interface WordTiming {
+  word: string;
+  start: number;
+  duration: number;
+}
+
+interface LyricLine {
+  time: number;
+  text: string;
+  words: WordTiming[];
+}
+
+function parseLRC(lrcText: string, totalDurationSec: number): LyricLine[] {
+  if (!lrcText) return [];
+
+  const lines = lrcText.split(/\r?\n/);
+  const parsedLines: LyricLine[] = [];
+
+  // Parse time tags like [01:23.45] or [01:23] or [01:23:450]
+  const timeRegex = /\[(\d+):(\d+)(?:\.(\d+))?\]/g;
+
+  for (const line of lines) {
+    timeRegex.lastIndex = 0;
+    const match = timeRegex.exec(line);
+    if (!match) continue;
+
+    const min = parseInt(match[1], 10);
+    const sec = parseInt(match[2], 10);
+    const msStr = match[3] || '0';
+    let ms = 0;
+    if (msStr.length === 1) ms = parseInt(msStr, 10) * 100;
+    else if (msStr.length === 2) ms = parseInt(msStr, 10) * 10;
+    else ms = parseInt(msStr, 10);
+
+    const timeInSeconds = min * 60 + sec + ms / 1000;
+    const text = line.replace(/\[\d+:\d+(?:\.\d+)?\]/g, '').trim();
+
+    parsedLines.push({
+      time: timeInSeconds,
+      text,
+      words: [],
+    });
+  }
+
+  // Sort lines by time
+  parsedLines.sort((a, b) => a.time - b.time);
+
+  // Now, calculate the duration of each line and split into words
+  for (let i = 0; i < parsedLines.length; i++) {
+    const currentLine = parsedLines[i];
+    const nextLineTime = i < parsedLines.length - 1 ? parsedLines[i + 1].time : totalDurationSec;
+    const lineDuration = Math.max(0.5, nextLineTime - currentLine.time);
+
+    // Split text into words (including whitespace/punctuation)
+    const rawWords = currentLine.text.split(/(\s+)/).filter(w => w.length > 0);
+
+    if (rawWords.length === 0) {
+      currentLine.words = [];
+      continue;
+    }
+
+    const totalChars = rawWords.reduce((sum, w) => sum + w.length, 0);
+
+    let elapsed = 0;
+    const wordsWithTiming: WordTiming[] = [];
+
+    for (const rw of rawWords) {
+      const wordDuration = (rw.length / totalChars) * lineDuration;
+      wordsWithTiming.push({
+        word: rw,
+        start: currentLine.time + elapsed,
+        duration: wordDuration,
+      });
+      elapsed += wordDuration;
+    }
+
+    currentLine.words = wordsWithTiming;
+  }
+
+  return parsedLines;
+}
+
 const initialDefaultProfile: UserProfile = {
   id: 'default',
   displayName: 'Spice Listener',
@@ -383,6 +465,18 @@ export default function SpiceApp() {
   const [isShuffle, setIsShuffle] = useState<boolean>(false);
   const [repeatMode, setRepeatMode] = useState<'none' | 'all' | 'one'>('all');
   const [expandedTab, setExpandedTab] = useState<'controls' | 'queue' | 'lyrics'>('controls');
+
+  // Dynamic Lyrics & Karaoke states
+  const [lyricsData, setLyricsData] = useState<{
+    lines: LyricLine[];
+    plainLyrics: string;
+    syncedLyrics: string;
+    isFallback: boolean;
+  } | null>(null);
+  const [lyricsLoading, setLyricsLoading] = useState(false);
+  const [isKaraokeMode, setIsKaraokeMode] = useState(true);
+  const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
+
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
@@ -1249,6 +1343,78 @@ export default function SpiceApp() {
       }
     };
   }, []);
+
+  // Dynamic Lyrics Fetcher & Karaoke Auto-scroller Effects
+  const activeLineIdx = lyricsData 
+    ? lyricsData.lines.findIndex((line, idx) => {
+        const nextLine = lyricsData.lines[idx + 1];
+        return progress >= line.time && (!nextLine || progress < nextLine.time);
+      })
+    : -1;
+
+  useEffect(() => {
+    if (!lyricsContainerRef.current) return;
+    const activeEl = lyricsContainerRef.current.querySelector('[data-active="true"]');
+    if (activeEl) {
+      activeEl.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    }
+  }, [activeLineIdx]);
+
+  useEffect(() => {
+    if (!currentTrack || !currentTrack.id || currentTrack.id === 'placeholder') {
+      setLyricsData(null);
+      return;
+    }
+
+    let active = true;
+    setLyricsLoading(true);
+
+    const fetchLyrics = async () => {
+      try {
+        const res = await fetch(`/api/yt/lyrics/${currentTrack.id}`);
+        if (!res.ok) throw new Error('Failed to fetch lyrics');
+        const data = await res.json();
+        if (!active) return;
+
+        const totalSec = currentTrack.durationMs 
+          ? currentTrack.durationMs / 1000 
+          : (data.durationMs ? data.durationMs / 1000 : 180);
+        const parsedLines = parseLRC(data.syncedLyrics, totalSec);
+
+        setLyricsData({
+          lines: parsedLines,
+          plainLyrics: data.plainLyrics,
+          syncedLyrics: data.syncedLyrics,
+          isFallback: !!data.isFallback,
+        });
+      } catch (err) {
+        console.error('Error fetching lyrics on client:', err);
+        if (!active) return;
+        const totalSec = currentTrack.durationMs ? currentTrack.durationMs / 1000 : 180;
+        const fallbackText = `🎵 [Instrumental Vibe]\n✨ Now Streaming: ${currentTrack.title}\n💫 Let the rhythm wash over you...`;
+        const parsedLines = parseLRC(fallbackText, totalSec);
+        setLyricsData({
+          lines: parsedLines,
+          plainLyrics: fallbackText,
+          syncedLyrics: fallbackText,
+          isFallback: true,
+        });
+      } finally {
+        if (active) {
+          setLyricsLoading(false);
+        }
+      }
+    };
+
+    fetchLyrics();
+
+    return () => {
+      active = false;
+    };
+  }, [currentTrack.id, currentTrack.durationMs]);
 
   // Play a track
   const playTrack = async (track: Track, newQueue?: Track[], startSearchIndex?: number) => {
@@ -3432,7 +3598,7 @@ export default function SpiceApp() {
                         🛠️ System Diagnostics & Live Terminal
                       </h3>
                       <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                        Spice Media Core v1.0.7 (Phase 4 Diagnostics)
+                        Spice Media Core v1.0.8 (Phase 4 Diagnostics)
                       </span>
                     </div>
 
@@ -4288,54 +4454,171 @@ export default function SpiceApp() {
                 )}
 
                 {expandedTab === 'lyrics' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                    <div style={{ overflowY: 'auto', flex: 1, maxHeight: '310px', paddingRight: '4px', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '16px', padding: '10px 0' }} className="custom-scrollbar">
-                      {[
-                        `♫ [Instrumental Intro - Spice Audio Engine]`,
-                        `♫ Walking through the neon rain...`,
-                        `♫ Stream "${currentTrack.title}" in our brains...`,
-                        `♫ We feel the beat, we feel the glow,`,
-                        `♫ With closed-source player leading the show.`,
-                        ``,
-                        `♫ [Chorus]`,
-                        `♫ Spice is running through our veins,`,
-                        `♫ Unlimited tracks, no more chains!`,
-                        `♫ Synchronized lyrics on the screen,`,
-                        `♫ The premium player you've ever seen!`,
-                        ``,
-                        `♫ [Verse 2]`,
-                        `♫ Slide it up or keep it small,`,
-                        `♫ Mini-player handles it all.`,
-                        `♫ Spotify, YouTube, Tidal combined,`,
-                        `♫ Ultimate hybrid player refined!`,
-                        ``,
-                        `♫ [Outro]`,
-                        `♫ Spice tonight, everything is bright...`,
-                        `♫ Sustained playback shining light!`,
-                        `♫ [Fading Out]`
-                      ].map((line, idx) => {
-                        const isEmpty = line.trim() === '';
-                        const isChorus = line.includes('[Chorus]');
-                        const isInstrumental = line.includes('[Instrumental');
-                        
-                        return (
-                          <div 
-                            key={idx} 
-                            style={{ 
-                              fontSize: isChorus ? '1.15rem' : '1rem', 
-                              fontWeight: (isChorus || isInstrumental) ? 800 : 500, 
-                              color: isInstrumental ? 'var(--accent-pink)' : isChorus ? '#fff' : 'rgba(255,255,255,0.7)',
-                              fontFamily: 'Outfit, sans-serif',
-                              lineHeight: 1.4,
-                              opacity: isEmpty ? 0 : 1,
-                              textShadow: isChorus ? '0 0 10px rgba(255,255,255,0.2)' : 'none',
-                              margin: isEmpty ? '8px 0' : '0'
-                            }}
-                          >
-                            {line}
-                          </div>
-                        );
-                      })}
+                  <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '8px' }}>
+                    {/* Karaoke Controls Header */}
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '8px 12px',
+                      background: 'rgba(255, 255, 255, 0.03)',
+                      borderRadius: '12px',
+                      border: '1px solid rgba(255, 255, 255, 0.05)',
+                      backdropFilter: 'blur(10px)',
+                      marginBottom: '4px'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', fontWeight: 600, color: 'rgba(255,255,255,0.8)' }}>
+                        <span style={{ fontSize: '1rem' }}>🎤</span>
+                        <span style={{ letterSpacing: '1px', fontFamily: 'Outfit, sans-serif' }}>KARAOKE MODE</span>
+                        {lyricsData?.isFallback && (
+                          <span style={{
+                            fontSize: '0.6rem',
+                            background: 'rgba(236, 72, 153, 0.15)',
+                            color: 'var(--accent-pink)',
+                            padding: '2px 6px',
+                            borderRadius: '20px',
+                            fontWeight: 700,
+                            letterSpacing: '0.5px'
+                          }}>
+                            THEMED FLOW
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => setIsKaraokeMode(!isKaraokeMode)}
+                        style={{
+                          background: isKaraokeMode ? 'linear-gradient(135deg, var(--accent-pink), #ec4899)' : 'rgba(255,255,255,0.08)',
+                          border: 'none',
+                          color: '#fff',
+                          padding: '4px 12px',
+                          borderRadius: '20px',
+                          fontSize: '0.75rem',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          boxShadow: isKaraokeMode ? '0 0 10px rgba(236, 72, 153, 0.4)' : 'none',
+                          transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                        }}
+                      >
+                        {isKaraokeMode ? 'ON ⚡' : 'OFF'}
+                      </button>
+                    </div>
+
+                    {/* Scrollable Lyric container */}
+                    <div 
+                      ref={lyricsContainerRef}
+                      style={{ 
+                        overflowY: 'auto', 
+                        flex: 1, 
+                        maxHeight: '265px', 
+                        paddingRight: '6px', 
+                        textAlign: 'center', 
+                        display: 'flex', 
+                        flexDirection: 'column', 
+                        gap: '20px', 
+                        padding: '12px 0',
+                        scrollBehavior: 'smooth'
+                      }} 
+                      className="custom-scrollbar"
+                    >
+                      {lyricsLoading ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '150px', gap: '12px', color: 'rgba(255,255,255,0.5)', fontSize: '0.9rem' }}>
+                          <div style={{
+                            width: '24px',
+                            height: '24px',
+                            borderRadius: '50%',
+                            border: '2px solid rgba(255,255,255,0.1)',
+                            borderTopColor: 'var(--accent-pink)',
+                            animation: 'spin 1s linear infinite'
+                          }} />
+                          <span style={{ fontFamily: 'Outfit, sans-serif' }}>Tuning sync wavelengths...</span>
+                        </div>
+                      ) : !lyricsData || lyricsData.lines.length === 0 ? (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '150px', color: 'rgba(255,255,255,0.4)', fontSize: '0.9rem', fontFamily: 'Outfit, sans-serif' }}>
+                          No lyrics found for this track.
+                        </div>
+                      ) : (
+                        lyricsData.lines.map((line, idx) => {
+                          const isActive = idx === activeLineIdx;
+                          const isPast = idx < activeLineIdx;
+                          const isChorus = line.text.includes('[Chorus]');
+                          const isHeader = line.text.startsWith('[') && line.text.endsWith(']');
+
+                          return (
+                            <div 
+                              key={idx} 
+                              data-active={isActive}
+                              onClick={() => {
+                                setProgress(line.time);
+                                if (streamProtocol === 'embed' && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+                                  ytPlayerRef.current.seekTo(line.time, true);
+                                }
+                                if (audioRef.current) {
+                                  audioRef.current.currentTime = line.time;
+                                }
+                              }}
+                              style={{ 
+                                fontSize: isChorus ? '1.15rem' : '1rem', 
+                                fontWeight: (isChorus || isHeader) ? 800 : (isActive ? 700 : 500), 
+                                color: isHeader ? 'var(--accent-pink)' : isChorus ? '#fff' : (isActive ? '#fff' : 'rgba(255,255,255,0.4)'),
+                                fontFamily: 'Outfit, sans-serif',
+                                lineHeight: 1.4,
+                                textShadow: isActive 
+                                  ? (isHeader ? '0 0 10px rgba(236,72,153,0.4)' : '0 0 12px rgba(255,255,255,0.3)') 
+                                  : 'none',
+                                cursor: 'pointer',
+                                padding: '6px 12px',
+                                borderRadius: '8px',
+                                transform: isActive ? 'scale(1.04)' : 'scale(1)',
+                                background: isActive ? 'rgba(255, 255, 255, 0.03)' : 'transparent',
+                                border: isActive ? '1px solid rgba(255,255,255,0.03)' : '1px solid transparent',
+                                transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                                opacity: isActive ? 1 : (isPast ? 0.35 : 0.6)
+                              }}
+                            >
+                              {isKaraokeMode && line.words.length > 0 && !isHeader ? (
+                                <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center' }}>
+                                  {line.words.map((w, wIdx) => {
+                                    const isWordActive = progress >= w.start && progress < (w.start + w.duration);
+                                    const isWordPassed = progress >= (w.start + w.duration);
+
+                                    let wColor = isActive ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.3)';
+                                    let wGlow = 'none';
+                                    let wWeight = isActive ? 700 : 500;
+
+                                    if (isWordPassed) {
+                                      wColor = '#fff';
+                                      wWeight = 800;
+                                      wGlow = '0 0 8px rgba(255,255,255,0.4)';
+                                    } else if (isWordActive) {
+                                      wColor = 'var(--accent-pink)';
+                                      wWeight = 800;
+                                      wGlow = '0 0 12px var(--accent-pink)';
+                                    }
+
+                                    return (
+                                      <span
+                                        key={wIdx}
+                                        style={{
+                                          color: wColor,
+                                          fontWeight: wWeight,
+                                          textShadow: wGlow,
+                                          transition: 'all 0.1s linear',
+                                          whiteSpace: 'pre',
+                                          display: 'inline-block'
+                                        }}
+                                      >
+                                        {w.word}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                line.text
+                              )}
+                            </div>
+                          );
+                        })
+                      )}
                     </div>
                   </div>
                 )}
