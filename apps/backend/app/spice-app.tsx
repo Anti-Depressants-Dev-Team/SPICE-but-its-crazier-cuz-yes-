@@ -374,8 +374,9 @@ export default function SpiceApp() {
   const [selfTestResults, setSelfTestResults] = useState<{
     api: 'passed' | 'failed' | null;
     db: 'passed' | 'failed' | 'disabled' | null;
+    embed: 'passed' | 'failed' | null;
     latency: number | null;
-  }>({ api: null, db: null, latency: null });
+  }>({ api: null, db: null, embed: null, latency: null });
   const [terminalFilter, setTerminalFilter] = useState('');
   const [terminalAutoScroll, setTerminalAutoScroll] = useState(true);
   const [logsCopied, setLogsCopied] = useState(false);
@@ -437,10 +438,29 @@ export default function SpiceApp() {
       logDebug('diagnostics', 'Cloud Database connection failed.');
     }
     
+    let embedStatus: 'passed' | 'failed' = 'failed';
+    try {
+      logDebug('diagnostics', 'Verifying YouTube Iframe API player library status...');
+      const hasYT = (window as any).YT && (window as any).YT.Player;
+      const hasPlayerInstance = ytPlayerRef.current !== null;
+      if (hasYT && hasPlayerInstance) {
+        embedStatus = 'passed';
+        logDebug('diagnostics', 'YouTube Iframe Player API fully cued and initialized!');
+      } else if (hasYT) {
+        embedStatus = 'passed';
+        logDebug('diagnostics', 'YouTube Iframe API loaded successfully.');
+      } else {
+        embedStatus = 'failed';
+        logDebug('diagnostics', 'YouTube Iframe API not detected in window scope. Check script blocks or content-blockers.');
+      }
+    } catch (e) {
+      embedStatus = 'failed';
+    }
+
     const latency = Date.now() - startTime;
-    setSelfTestResults({ api: apiStatus, db: dbStatus, latency });
+    setSelfTestResults({ api: apiStatus, db: dbStatus, embed: embedStatus, latency });
     setSelfTestRunning(false);
-    logDebug('diagnostics', `Self-test completed in ${latency}ms. Status: API=${apiStatus}, DB=${dbStatus}`);
+    logDebug('diagnostics', `Self-test completed in ${latency}ms. Status: API=${apiStatus}, DB=${dbStatus}, EMBED=${embedStatus}`);
   };
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -532,6 +552,7 @@ export default function SpiceApp() {
   const initializeYtPlayer = useCallback(() => {
     if (typeof window === 'undefined' || ytPlayerRef.current) return;
     try {
+      logDebug('system', 'Initializing YouTube Embed Player Instance...');
       ytPlayerRef.current = new (window as any).YT.Player('spice-yt-iframe-container', {
         height: '1',
         width: '1',
@@ -547,27 +568,48 @@ export default function SpiceApp() {
         },
         events: {
           onReady: (event: any) => {
-            logDebug('system', 'YouTube Iframe Embed Player initialized successfully.');
+            logDebug('system', 'YouTube Iframe Embed Player instance successfully cued!');
             event.target.setVolume(volume);
           },
           onStateChange: (event: any) => {
             const state = event.data;
-            if (state === 1) { // Playing
+            if (state === -1) {
+              logDebug('stream', 'YouTube Embed State: UNSTARTED (-1)');
+            } else if (state === 1) { // Playing
+              logDebug('stream', 'YouTube Embed State: ACTIVE AUDIO PLAYBACK (1)');
               setIsPlaying(true);
               setIsLoadingStream(false);
             } else if (state === 2) { // Paused
+              logDebug('stream', 'YouTube Embed State: AUDIO PAUSED (2)');
               setIsPlaying(false);
+            } else if (state === 3) { // Buffering
+              logDebug('stream', 'YouTube Embed State: BUFFERING AUDIO (3)');
+            } else if (state === 5) { // Cued
+              logDebug('stream', 'YouTube Embed State: AUDIO TRACK CUED (5)');
             } else if (state === 0) { // Ended
+              logDebug('stream', 'YouTube Embed State: PLAYBACK COMPLETED (0)');
               handleAudioEnded();
             }
           },
           onError: (event: any) => {
-            logDebug('error', `YouTube Embed Player error: code ${event.data}`);
+            const code = event.data;
+            if (code === 2) {
+              logDebug('error', 'YouTube Embed Error (2): The request contains an invalid parameter value.');
+            } else if (code === 5) {
+              logDebug('error', 'YouTube Embed Error (5): The requested content cannot be played in an HTML5 player.');
+            } else if (code === 100) {
+              logDebug('error', 'YouTube Embed Error (100): The requested video was not found (removed or marked as private).');
+            } else if (code === 101 || code === 150) {
+              logDebug('error', 'YouTube Embed Error (101/150): The video owner has disallowed embedded playbacks for this track. Switch stream endpoint to direct proxy.');
+            } else {
+              logDebug('error', `YouTube Embed Player error: code ${code}`);
+            }
           }
         }
       });
     } catch (e) {
       console.error('Error initializing YouTube player:', e);
+      logDebug('error', `YouTube Embed player initialization failed: ${e}`);
     }
   }, [volume, logDebug]);
 
@@ -575,7 +617,9 @@ export default function SpiceApp() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     
+    logDebug('system', 'Client environment secure. Initializing YouTube Embed script loader...');
     if (!document.getElementById('youtube-iframe-api-script')) {
+      logDebug('system', 'Injecting script tag: https://www.youtube.com/iframe_api');
       const tag = document.createElement('script');
       tag.id = 'youtube-iframe-api-script';
       tag.src = 'https://www.youtube.com/iframe_api';
@@ -584,10 +628,12 @@ export default function SpiceApp() {
     }
 
     (window as any).onYouTubeIframeAPIReady = () => {
+      logDebug('system', 'Global onYouTubeIframeAPIReady hook triggered. Cueing video player instances.');
       initializeYtPlayer();
     };
 
     if ((window as any).YT && (window as any).YT.Player) {
+      logDebug('system', 'YouTube Iframe API libraries detected in window scope on boot. Initializing instances.');
       initializeYtPlayer();
     }
   }, [initializeYtPlayer]);
@@ -3005,6 +3051,24 @@ export default function SpiceApp() {
                         <span style={{ fontSize: '0.9rem', fontWeight: 800, color: '#22d3ee' }}>
                           {streamProtocol === 'proxy' ? 'PROXY' : (streamProtocol === 'web' ? 'ATTESTATION' : 'EMBED')}
                         </span>
+                      </div>
+
+                      {/* YouTube Embed Player API Card */}
+                      <div style={{ background: '#070707', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Embed Player API</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <div style={{
+                            width: '8px',
+                            height: '8px',
+                            borderRadius: '50%',
+                            background: selfTestRunning ? '#fb923c' : (selfTestResults.embed === 'passed' ? '#4ade80' : (selfTestResults.embed === 'failed' ? '#f87171' : '#52525b')),
+                            boxShadow: selfTestRunning ? '0 0 8px #fb923c' : (selfTestResults.embed === 'passed' ? '0 0 8px #4ade80' : (selfTestResults.embed === 'failed' ? '0 0 8px #f87171' : 'none')),
+                            animation: selfTestRunning ? 'blink 0.8s ease infinite alternate' : 'none'
+                          }}></div>
+                          <span style={{ fontSize: '0.85rem', fontWeight: 700, color: selfTestRunning ? '#fb923c' : (selfTestResults.embed === 'passed' ? '#4ade80' : (selfTestResults.embed === 'failed' ? '#f87171' : '#a1a1aa')) }}>
+                            {selfTestRunning ? 'LOADING' : (selfTestResults.embed === 'passed' ? 'READY' : (selfTestResults.embed === 'failed' ? 'BLOCKED' : 'UNTESTED'))}
+                          </span>
+                        </div>
                       </div>
                     </div>
 
