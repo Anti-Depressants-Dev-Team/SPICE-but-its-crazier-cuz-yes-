@@ -415,13 +415,20 @@ export default function SpiceApp() {
     
     try {
       logDebug('diagnostics', 'Pinging server database sync endpoint...');
-      const dbPing = await fetch(`/api/sync/likes`);
+      const headers: HeadersInit = {};
+      if (cloudToken) {
+        headers['Authorization'] = `Bearer ${cloudToken}`;
+      }
+      const dbPing = await fetch(`/api/sync/likes`, { headers });
       if (dbPing.status === 501) {
         dbStatus = 'disabled';
         logDebug('diagnostics', 'Cloud database bypassed: server is running in offline LocalStorage mode.');
+      } else if (dbPing.status === 401) {
+        dbStatus = 'passed';
+        logDebug('diagnostics', 'Neon Cloud Database endpoint reachable (authentication required).');
       } else if (dbPing.ok) {
         dbStatus = 'passed';
-        logDebug('diagnostics', 'Neon Cloud Database connection healthy!');
+        logDebug('diagnostics', 'Neon Cloud Database connection healthy and authenticated!');
       } else {
         dbStatus = 'failed';
         logDebug('diagnostics', `Cloud Database sync ping failed with status ${dbPing.status}`);
