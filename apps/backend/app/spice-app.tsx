@@ -476,6 +476,8 @@ export default function SpiceApp() {
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const [isKaraokeMode, setIsKaraokeMode] = useState(false);
   const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
+  const [showBarLyrics, setShowBarLyrics] = useState(false);
+  const [showMiniLyrics, setShowMiniLyrics] = useState(false);
 
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
@@ -4067,6 +4069,128 @@ export default function SpiceApp() {
         </div>
       )}
 
+      {/* ═══ Floating Bar Lyrics Drawer ═══ */}
+      {showBarLyrics && (
+        <div className="lyrics-drawer animate-in" style={{ position: 'fixed', right: '24px', bottom: '96px', width: '320px', height: '420px', background: 'rgba(10, 10, 10, 0.95)', border: '1px solid var(--border-color)', borderRadius: '16px', backdropFilter: 'blur(20px)', zIndex: 99, padding: '20px', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 32px rgba(0,0,0,0.6)' }}>
+          {/* Header */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 800, fontFamily: 'Outfit, sans-serif', color: '#fff' }}>Lyrics</h4>
+              {lyricsData?.isFallback && (
+                <span style={{ fontSize: '0.58rem', background: 'rgba(236, 72, 153, 0.15)', color: 'var(--accent-pink)', padding: '2px 6px', borderRadius: '20px', fontWeight: 700 }}>THEMED</span>
+              )}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <button 
+                onClick={() => setIsKaraokeMode(!isKaraokeMode)} 
+                style={{ background: 'none', border: 'none', color: isKaraokeMode ? 'var(--accent-pink)' : 'rgba(255,255,255,0.4)', cursor: 'pointer', fontSize: '0.9rem', outline: 'none' }}
+                title="Toggle Karaoke Mode"
+              >
+                🎤 {isKaraokeMode ? 'ON' : 'OFF'}
+              </button>
+              <button onClick={() => setShowBarLyrics(false)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1rem', outline: 'none' }}>✕</button>
+            </div>
+          </div>
+
+          {/* Body content (same interactive parser view!) */}
+          <div 
+            ref={lyricsContainerRef}
+            style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '18px', textAlign: 'center', padding: '10px 0', scrollBehavior: 'smooth' }} 
+            className="custom-scrollbar"
+          >
+            {lyricsLoading ? (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '12px', color: 'rgba(255,255,255,0.5)', fontSize: '0.85rem' }}>
+                <div style={{ width: '20px', height: '20px', borderRadius: '50%', border: '2px solid rgba(255,255,255,0.1)', borderTopColor: 'var(--accent-pink)', animation: 'spin 1s linear infinite' }} />
+                <span>Tuning...</span>
+              </div>
+            ) : !lyricsData || lyricsData.lines.length === 0 ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.4)', fontSize: '0.85rem' }}>
+                No lyrics found.
+              </div>
+            ) : (
+              lyricsData.lines.map((line, idx) => {
+                const isActive = idx === activeLineIdx;
+                const isPast = idx < activeLineIdx;
+                const isChorus = line.text.includes('[Chorus]');
+                const isHeader = line.text.startsWith('[') && line.text.endsWith(']');
+
+                return (
+                  <div 
+                    key={idx} 
+                    data-active={isActive}
+                    onClick={() => {
+                      setProgress(line.time);
+                      if (streamProtocol === 'embed' && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+                        ytPlayerRef.current.seekTo(line.time, true);
+                      }
+                      if (audioRef.current) {
+                        audioRef.current.currentTime = line.time;
+                      }
+                    }}
+                    style={{ 
+                      fontSize: isChorus ? '1rem' : '0.88rem', 
+                      fontWeight: (isChorus || isHeader) ? 800 : (isActive ? 700 : 500), 
+                      color: isHeader ? 'var(--accent-pink)' : isChorus ? '#fff' : (isActive ? '#fff' : 'rgba(255,255,255,0.4)'),
+                      fontFamily: 'Outfit, sans-serif',
+                      lineHeight: 1.3,
+                      textShadow: isActive ? (isHeader ? '0 0 10px rgba(236,72,153,0.4)' : '0 0 12px rgba(255,255,255,0.3)') : 'none',
+                      cursor: 'pointer',
+                      padding: '4px 8px',
+                      borderRadius: '6px',
+                      transform: isActive ? 'scale(1.03)' : 'scale(1)',
+                      background: isActive ? 'rgba(255, 255, 255, 0.03)' : 'transparent',
+                      transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                      opacity: isActive ? 1 : (isPast ? 0.35 : 0.6)
+                    }}
+                  >
+                    {isKaraokeMode && line.words.length > 0 && !isHeader ? (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center' }}>
+                        {line.words.map((w, wIdx) => {
+                          const isWordActive = progress >= w.start && progress < (w.start + w.duration);
+                          const isWordPassed = progress >= (w.start + w.duration);
+
+                          let wColor = isActive ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.3)';
+                          let wGlow = 'none';
+                          let wWeight = isActive ? 700 : 500;
+
+                          if (isWordPassed) {
+                            wColor = '#fff';
+                            wWeight = 800;
+                            wGlow = '0 0 6px rgba(255,255,255,0.4)';
+                          } else if (isWordActive) {
+                            wColor = 'var(--accent-pink)';
+                            wWeight = 800;
+                            wGlow = '0 0 10px var(--accent-pink)';
+                          }
+
+                          return (
+                            <span
+                              key={wIdx}
+                              style={{
+                                color: wColor,
+                                fontWeight: wWeight,
+                                textShadow: wGlow,
+                                transition: 'all 0.1s linear',
+                                whiteSpace: 'pre',
+                                display: 'inline-block'
+                              }}
+                            >
+                              {w.word}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      line.text
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ═══ Now Playing Bar Panel ═══ */}
       <footer className="now-playing">
         {/* Left: playback controls */}
@@ -4153,7 +4277,22 @@ export default function SpiceApp() {
         <div className="now-playing__right-controls" style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <button 
             className="now-playing__btn" 
-            onClick={() => setShowQueueDrawer(!showQueueDrawer)} 
+            onClick={() => {
+              setShowBarLyrics(!showBarLyrics);
+              setShowQueueDrawer(false);
+            }} 
+            style={{ color: showBarLyrics ? 'var(--accent-pink)' : '#fff', padding: '4px', cursor: 'pointer', outline: 'none', fontSize: '1.05rem', transition: 'all 0.15s ease' }}
+            title="Real-time Synced Lyrics"
+          >
+            🎤
+          </button>
+
+          <button 
+            className="now-playing__btn" 
+            onClick={() => {
+              setShowQueueDrawer(!showQueueDrawer);
+              setShowBarLyrics(false);
+            }} 
             style={{ color: showQueueDrawer ? 'var(--accent-pink)' : '#fff', padding: '4px', cursor: 'pointer', outline: 'none' }}
             title="Up Next Queue"
           >
@@ -4165,6 +4304,8 @@ export default function SpiceApp() {
             onClick={() => {
               setPlayerViewMode('mini');
               localStorage.setItem('spice_player_view_mode', 'mini');
+              setShowBarLyrics(false);
+              setShowQueueDrawer(false);
             }} 
             style={{ color: '#fff', padding: '4px', cursor: 'pointer', outline: 'none', transition: 'all 0.15s ease' }}
             title="Switch to Floating Mini Player"
@@ -4670,7 +4811,7 @@ export default function SpiceApp() {
             right: miniPlayerPos ? 'auto' : '24px',
             bottom: miniPlayerPos ? 'auto' : '24px',
             width: '340px',
-            height: '108px',
+            height: showMiniLyrics ? '160px' : '108px',
             background: 'rgba(10, 10, 10, 0.88)',
             backgroundImage: `radial-gradient(circle at 10% 10%, rgba(var(--accent-pink-rgb, 236, 72, 153), 0.12), transparent 70%)`,
             border: '1px solid var(--border-color)',
@@ -4680,17 +4821,20 @@ export default function SpiceApp() {
             boxShadow: '0 16px 48px rgba(0, 0, 0, 0.7), 0 0 20px rgba(var(--accent-pink-rgb, 236, 72, 153), 0.2)',
             zIndex: 99999,
             display: 'flex',
+            flexDirection: 'column',
             alignItems: 'center',
             padding: '14px',
-            gap: '12px',
+            gap: '8px',
             fontFamily: 'Outfit, sans-serif',
             color: '#fff',
             cursor: isDraggingMini ? 'grabbing' : 'grab',
             userSelect: 'none',
-            touchAction: 'none'
+            touchAction: 'none',
+            transition: 'height 0.25s cubic-bezier(0.4, 0, 0.2, 1)'
           }}
         >
-          {/* Artwork */}
+          <div style={{ display: 'flex', width: '100%', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
+            {/* Artwork */}
           <div 
             style={{ 
               position: 'relative', 
@@ -4847,6 +4991,29 @@ export default function SpiceApp() {
               {/* View Switches */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <button 
+                  onClick={() => setShowMiniLyrics(!showMiniLyrics)}
+                  style={{ 
+                    background: showMiniLyrics ? 'var(--accent-pink)' : 'rgba(255,255,255,0.05)', 
+                    border: '1px solid rgba(255,255,255,0.1)', 
+                    color: '#fff', 
+                    width: '28px',
+                    height: '28px',
+                    borderRadius: '8px', 
+                    cursor: 'pointer', 
+                    outline: 'none', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center',
+                    fontSize: '0.8rem',
+                    transition: 'all 0.15s ease',
+                    boxShadow: showMiniLyrics ? '0 0 8px rgba(236, 72, 153, 0.4)' : 'none'
+                  }}
+                  title="Toggle Lyrics View"
+                >
+                  🎤
+                </button>
+
+                <button 
                   onClick={() => {
                     setPlayerViewMode('expanded');
                     localStorage.setItem('spice_player_view_mode', 'expanded');
@@ -4897,6 +5064,46 @@ export default function SpiceApp() {
               </div>
             </div>
           </div>
+
+          </div>
+
+          {/* Mini Player Synced Lyrics Strip */}
+          {showMiniLyrics && (
+            <div style={{
+              width: '100%',
+              borderTop: '1px solid rgba(255,255,255,0.06)',
+              paddingTop: '8px',
+              marginTop: '4px',
+              textAlign: 'center',
+              minHeight: '34px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontFamily: 'Outfit, sans-serif',
+              fontSize: '0.82rem',
+              fontWeight: 600,
+              color: 'var(--accent-pink)',
+              textShadow: '0 0 8px rgba(236,72,153,0.3)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              paddingLeft: '4px',
+              paddingRight: '4px',
+              zIndex: 1,
+              userSelect: 'text',
+              cursor: 'default'
+            }}>
+              {lyricsLoading ? (
+                <span style={{ color: 'rgba(255,255,255,0.4)' }}>Tuning...</span>
+              ) : activeLineIdx >= 0 && lyricsData ? (
+                <span className="animate-in" key={activeLineIdx} style={{ animationDuration: '0.3s' }}>
+                  {lyricsData.lines[activeLineIdx].text}
+                </span>
+              ) : (
+                <span style={{ color: 'rgba(255,255,255,0.3)' }}>🎵 (Instrumental)</span>
+              )}
+            </div>
+          )}
 
           {/* Interactive Seek Progress strip at the very bottom */}
           <div 
