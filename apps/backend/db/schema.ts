@@ -27,6 +27,7 @@ export const playlists = pgTable('playlists', {
   userId: uuid('user_id')
     .notNull()
     .references(() => users.id, { onDelete: 'cascade' }),
+  profileId: text('profile_id').notNull().default('default'),
   title: text('title').notNull(),
   description: text('description'),
   sortIndex: integer('sort_index').notNull().default(0),
@@ -54,11 +55,12 @@ export const likes = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
+    profileId: text('profile_id').notNull().default('default'),
     sourceId: text('source_id').notNull(),
     trackId: text('track_id').notNull(),
     likedAt: timestamp('liked_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [primaryKey({ columns: [t.userId, t.sourceId, t.trackId] })],
+  (t) => [primaryKey({ columns: [t.userId, t.profileId, t.sourceId, t.trackId] })],
 );
 
 export const history = pgTable('history', {
@@ -66,6 +68,7 @@ export const history = pgTable('history', {
   userId: uuid('user_id')
     .notNull()
     .references(() => users.id, { onDelete: 'cascade' }),
+  profileId: text('profile_id').notNull().default('default'),
   sourceId: text('source_id').notNull(),
   trackId: text('track_id').notNull(),
   playedAt: timestamp('played_at', { withTimezone: true }).notNull().defaultNow(),

@@ -2,8 +2,7 @@ import { jsonResponse, optionsResponse } from '@/lib/cors';
 import { verifySession } from '@/lib/auth';
 import { db } from '@/db';
 import { playlists, playlistItems } from '@/db/schema';
-import { eq } from 'drizzle-orm';
-import { getLocalPlaylists, saveLocalPlaylists } from '@/lib/local-db';
+import { eq, and } from 'drizzle-orm';
 
 export const runtime = 'nodejs';
 
@@ -25,8 +24,14 @@ export async function GET(request: Request) {
       return jsonResponse({ error: 'database_not_configured', message: 'Backend DATABASE_URL environment variable is not configured.' }, { status: 500 });
     }
 
+    const { searchParams } = new URL(request.url);
+    const profileId = searchParams.get('profileId') || 'default';
+
     const userPlaylists = await db.query.playlists.findMany({
-      where: eq(playlists.userId, session.userId),
+      where: and(
+        eq(playlists.userId, session.userId),
+        eq(playlists.profileId, profileId)
+      ),
       orderBy: playlists.sortIndex,
     });
 
@@ -73,7 +78,8 @@ export async function POST(request: Request) {
 
     const token = auth.substring(7);
     const session = await verifySession(token);
-    const { playlists: clientPlaylists } = await request.json();
+    const { playlists: clientPlaylists, profileId: payloadProfileId } = await request.json();
+    const profileId = payloadProfileId || 'default';
 
     if (!Array.isArray(clientPlaylists)) {
       return jsonResponse({ error: 'invalid_payload', message: 'Playlists payload must be an array.' }, { status: 400 });
@@ -84,12 +90,22 @@ export async function POST(request: Request) {
     }
 
     // Run clean operations sequentially without transactions for neon-http driver compatibility
-    const existing = await db.select().from(playlists).where(eq(playlists.userId, session.userId));
+    const existing = await db.select().from(playlists).where(
+      and(
+        eq(playlists.userId, session.userId),
+        eq(playlists.profileId, profileId)
+      )
+    );
     
     for (const pl of existing) {
       await db.delete(playlistItems).where(eq(playlistItems.playlistId, pl.id));
     }
-    await db.delete(playlists).where(eq(playlists.userId, session.userId));
+    await db.delete(playlists).where(
+      and(
+        eq(playlists.userId, session.userId),
+        eq(playlists.profileId, profileId)
+      )
+    );
 
     for (let i = 0; i < clientPlaylists.length; i++) {
       const clientPl = clientPlaylists[i];
@@ -100,6 +116,7 @@ export async function POST(request: Request) {
       const [insertedPl] = await db.insert(playlists).values({
         id: isUUID ? clientPl.id : undefined,
         userId: session.userId,
+        profileId,
         title: clientPl.title,
         description: clientPl.description || '',
         sortIndex: i,

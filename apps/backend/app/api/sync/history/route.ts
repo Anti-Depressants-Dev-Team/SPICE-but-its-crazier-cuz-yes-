@@ -2,8 +2,7 @@ import { jsonResponse, optionsResponse } from '@/lib/cors';
 import { verifySession } from '@/lib/auth';
 import { db } from '@/db';
 import { history } from '@/db/schema';
-import { eq, desc } from 'drizzle-orm';
-import { getLocalHistory, saveLocalHistory } from '@/lib/local-db';
+import { eq, desc, and } from 'drizzle-orm';
 
 export const runtime = 'nodejs';
 
@@ -25,8 +24,14 @@ export async function GET(request: Request) {
       return jsonResponse({ error: 'database_not_configured', message: 'Backend DATABASE_URL environment variable is not configured.' }, { status: 500 });
     }
 
+    const { searchParams } = new URL(request.url);
+    const profileId = searchParams.get('profileId') || 'default';
+
     const userHistory = await db.query.history.findMany({
-      where: eq(history.userId, session.userId),
+      where: and(
+        eq(history.userId, session.userId),
+        eq(history.profileId, profileId)
+      ),
       orderBy: desc(history.playedAt),
       limit: 50,
     });
@@ -59,7 +64,8 @@ export async function POST(request: Request) {
 
     const token = auth.substring(7);
     const session = await verifySession(token);
-    const { history: clientHistory } = await request.json();
+    const { history: clientHistory, profileId: payloadProfileId } = await request.json();
+    const profileId = payloadProfileId || 'default';
 
     if (!Array.isArray(clientHistory)) {
       return jsonResponse({ error: 'invalid_payload', message: 'History payload must be an array.' }, { status: 400 });
@@ -70,12 +76,18 @@ export async function POST(request: Request) {
     }
 
     // Clear old history and replace with modern client stack (transaction-free for neon-http compatibility)
-    await db.delete(history).where(eq(history.userId, session.userId));
+    await db.delete(history).where(
+      and(
+        eq(history.userId, session.userId),
+        eq(history.profileId, profileId)
+      )
+    );
 
     if (clientHistory.length > 0) {
       // Dedup consecutive ids
       const payload = clientHistory.slice(0, 50).map((h: { id: string; sourceId?: string }, i: number) => ({
         userId: session.userId,
+        profileId,
         sourceId: h.sourceId || 'yt',
         trackId: h.id,
         // Stagger playedAt times slightly to preserve order

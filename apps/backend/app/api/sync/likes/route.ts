@@ -2,8 +2,7 @@ import { jsonResponse, optionsResponse } from '@/lib/cors';
 import { verifySession } from '@/lib/auth';
 import { db } from '@/db';
 import { likes } from '@/db/schema';
-import { eq } from 'drizzle-orm';
-import { getLocalLikes, saveLocalLikes } from '@/lib/local-db';
+import { eq, and } from 'drizzle-orm';
 
 export const runtime = 'nodejs';
 
@@ -25,8 +24,14 @@ export async function GET(request: Request) {
       return jsonResponse({ error: 'database_not_configured', message: 'Backend DATABASE_URL environment variable is not configured.' }, { status: 500 });
     }
 
+    const { searchParams } = new URL(request.url);
+    const profileId = searchParams.get('profileId') || 'default';
+
     const userLikes = await db.query.likes.findMany({
-      where: eq(likes.userId, session.userId),
+      where: and(
+        eq(likes.userId, session.userId),
+        eq(likes.profileId, profileId)
+      ),
     });
 
     return jsonResponse({
@@ -52,7 +57,8 @@ export async function POST(request: Request) {
 
     const token = auth.substring(7);
     const session = await verifySession(token);
-    const { likedTracks } = await request.json();
+    const { likedTracks, profileId: payloadProfileId } = await request.json();
+    const profileId = payloadProfileId || 'default';
 
     if (!Array.isArray(likedTracks)) {
       return jsonResponse({ error: 'invalid_payload', message: 'Payload must be an array of track IDs.' }, { status: 400 });
@@ -63,13 +69,19 @@ export async function POST(request: Request) {
     }
 
     // Clear old likes and push modern favorites (transaction-free for neon-http compatibility)
-    await db.delete(likes).where(eq(likes.userId, session.userId));
+    await db.delete(likes).where(
+      and(
+        eq(likes.userId, session.userId),
+        eq(likes.profileId, profileId)
+      )
+    );
 
     if (likedTracks.length > 0) {
       // Insert chunks of unique tracks
       const uniqueTracks = Array.from(new Set(likedTracks));
       const payload = uniqueTracks.map(id => ({
         userId: session.userId,
+        profileId,
         sourceId: 'yt',
         trackId: id as string,
       }));

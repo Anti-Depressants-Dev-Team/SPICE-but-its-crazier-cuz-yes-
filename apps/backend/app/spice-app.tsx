@@ -843,48 +843,23 @@ export default function SpiceApp() {
     setDbError(null);
     logDebug('database', 'Initiating full sync merge with Cloud Neon Database...');
     try {
-      // 1. Pull likes
-      const likesRes = await fetch('/api/sync/likes', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!likesRes.ok) {
-        const errJson = await likesRes.json().catch(() => ({}));
-        throw new Error(errJson.message || `Failed to retrieve favorites (Status ${likesRes.status})`);
-      }
-      const likesData = await likesRes.json();
-      const serverLikes = likesData.likedTracks ?? [];
+      // 0. Read current local states directly from localStorage to completely bypass React state hydration race conditions
+      const savedProfilesStr = localStorage.getItem('spice_profiles_list');
+      let localProfiles: UserProfile[] = profiles;
+      try {
+        if (savedProfilesStr) {
+          const parsed = JSON.parse(savedProfilesStr);
+          if (parsed && parsed.length > 0) localProfiles = parsed;
+        }
+      } catch (e) {}
 
-      if (likesData.localFallback) {
-        setIsLocalDbFallback(true);
-        localStorage.setItem('spice_local_db_fallback', 'true');
-      } else {
-        setIsLocalDbFallback(false);
-        localStorage.setItem('spice_local_db_fallback', 'false');
-      }
+      const activeProf = localProfiles.find(p => p.id === activeProfileId) || localProfiles[0] || initialDefaultProfile;
       
-      // 2. Pull history
-      const histRes = await fetch('/api/sync/history', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!histRes.ok) {
-        const errJson = await histRes.json().catch(() => ({}));
-        throw new Error(errJson.message || `Failed to retrieve history (Status ${histRes.status})`);
-      }
-      const histData = await histRes.json();
-      const serverHistory = histData.history ?? [];
+      const localLikes = new Set<string>(activeProf.likedTracks || []);
+      const localHistory = activeProf.history || [];
+      const localPlaylists = activeProf.customPlaylists || [];
 
-      // 3. Pull playlists
-      const plRes = await fetch('/api/sync/playlists', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!plRes.ok) {
-        const errJson = await plRes.json().catch(() => ({}));
-        throw new Error(errJson.message || `Failed to retrieve playlists (Status ${plRes.status})`);
-      }
-      const plData = await plRes.json();
-      const serverPlaylists = plData.playlists ?? [];
-
-      // 3.5. Pull profiles
+      // 1. Pull profiles list
       const profRes = await fetch('/api/sync/profiles', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -895,19 +870,58 @@ export default function SpiceApp() {
       const profData = await profRes.json();
       const serverProfiles = profData.profiles ?? [];
 
-      // Merge Likes
-      const mergedLikes = new Set([...likedTracks, ...serverLikes]);
+      if (profData.localFallback) {
+        setIsLocalDbFallback(true);
+        localStorage.setItem('spice_local_db_fallback', 'true');
+      } else {
+        setIsLocalDbFallback(false);
+        localStorage.setItem('spice_local_db_fallback', 'false');
+      }
+
+      // 2. Pull active profile likes
+      const likesRes = await fetch(`/api/sync/likes?profileId=${encodeURIComponent(activeProf.id)}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!likesRes.ok) {
+        const errJson = await likesRes.json().catch(() => ({}));
+        throw new Error(errJson.message || `Failed to retrieve favorites (Status ${likesRes.status})`);
+      }
+      const likesData = await likesRes.json();
+      const serverLikes = likesData.likedTracks ?? [];
+
+      // 3. Pull active profile history
+      const histRes = await fetch(`/api/sync/history?profileId=${encodeURIComponent(activeProf.id)}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!histRes.ok) {
+        const errJson = await histRes.json().catch(() => ({}));
+        throw new Error(errJson.message || `Failed to retrieve history (Status ${histRes.status})`);
+      }
+      const histData = await histRes.json();
+      const serverHistory = histData.history ?? [];
+
+      // 4. Pull active profile playlists
+      const plRes = await fetch(`/api/sync/playlists?profileId=${encodeURIComponent(activeProf.id)}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!plRes.ok) {
+        const errJson = await plRes.json().catch(() => ({}));
+        throw new Error(errJson.message || `Failed to retrieve playlists (Status ${plRes.status})`);
+      }
+      const plData = await plRes.json();
+      const serverPlaylists = plData.playlists ?? [];
+
+      // 5. Merge Active Profile Data
+      const mergedLikes = new Set([...localLikes, ...serverLikes]);
       const mergedLikesArray = Array.from(mergedLikes);
 
-      // Merge History (deduplicated by track id, limit 50)
       const mergedHistoryMap = new Map<string, Track>();
-      [...serverHistory, ...history].forEach(track => {
+      [...serverHistory, ...localHistory].forEach(track => {
         mergedHistoryMap.set(track.id, track);
       });
       const mergedHistory = Array.from(mergedHistoryMap.values()).slice(0, 50);
 
-      // Merge Playlists
-      const mergedPlaylists = [...customPlaylists];
+      const mergedPlaylists = [...localPlaylists];
       serverPlaylists.forEach((serverPl: any) => {
         const existing = mergedPlaylists.find(pl => pl.title === serverPl.title);
         if (!existing) {
@@ -929,12 +943,11 @@ export default function SpiceApp() {
         }
       });
 
-      // Merge Profiles
-      const mergedProfiles = [...profiles];
+      // 6. Merge Profiles Configuration List
+      const mergedProfiles = [...localProfiles];
       serverProfiles.forEach((serverProf: any) => {
         const existingIdx = mergedProfiles.findIndex(p => p.id === serverProf.id);
         if (existingIdx !== -1) {
-          // Update metadata of existing profile
           mergedProfiles[existingIdx] = {
             ...mergedProfiles[existingIdx],
             displayName: serverProf.displayName,
@@ -946,7 +959,6 @@ export default function SpiceApp() {
             avatarUrl: serverProf.avatarUrl || undefined,
           };
         } else {
-          // Add new profile from server
           mergedProfiles.push({
             id: serverProf.id,
             displayName: serverProf.displayName,
@@ -964,20 +976,13 @@ export default function SpiceApp() {
         }
       });
 
-      // Find current active profile
-      const activeProf = mergedProfiles.find(p => p.id === activeProfileId) || mergedProfiles[0];
-      
-      // Update Local State
-      setLikedTracks(mergedLikes);
-      setHistory(mergedHistory);
-      setCustomPlaylists(mergedPlaylists);
-
+      // 7. Inject active profile merges
       const finalProfiles = mergedProfiles.map(p => {
-        if (p.id === (activeProf?.id || activeProfileId)) {
+        if (p.id === activeProf.id) {
           return {
             ...p,
             likedTracks: mergedLikesArray,
-            likedTrackDetails: activeProf?.likedTrackDetails || {},
+            likedTrackDetails: activeProf.likedTrackDetails || {},
             customPlaylists: mergedPlaylists,
             history: mergedHistory
           };
@@ -985,6 +990,10 @@ export default function SpiceApp() {
         return p;
       });
 
+      // 8. Update client states
+      setLikedTracks(mergedLikes);
+      setHistory(mergedHistory);
+      setCustomPlaylists(mergedPlaylists);
       setProfiles(finalProfiles);
       localStorage.setItem('spice_profiles_list', JSON.stringify(finalProfiles));
 
@@ -998,14 +1007,14 @@ export default function SpiceApp() {
         setEditAvatarUrl(activeProf.avatarUrl || '');
       }
 
-      // 4. Push Merged State to Cloud Database
+      // 9. Push Merged States to Cloud Database
       const postLikesRes = await fetch('/api/sync/likes', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ likedTracks: mergedLikesArray })
+        body: JSON.stringify({ likedTracks: mergedLikesArray, profileId: activeProf.id })
       });
       if (!postLikesRes.ok) {
         const errJson = await postLikesRes.json().catch(() => ({}));
@@ -1018,7 +1027,7 @@ export default function SpiceApp() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ history: mergedHistory })
+        body: JSON.stringify({ history: mergedHistory, profileId: activeProf.id })
       });
       if (!postHistRes.ok) {
         const errJson = await postHistRes.json().catch(() => ({}));
@@ -1031,7 +1040,7 @@ export default function SpiceApp() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ playlists: mergedPlaylists })
+        body: JSON.stringify({ playlists: mergedPlaylists, profileId: activeProf.id })
       });
       if (!postPlRes.ok) {
         const errJson = await postPlRes.json().catch(() => ({}));
